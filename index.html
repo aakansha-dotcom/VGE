@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Gel Electrophoresis Simulator</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1f5a219d;
+        }
+        .container {
+            background-color: rgba(255, 255, 255, 0.839);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        .control-panel {
+            background-color: #ecf0f1;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, button {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        button {
+            background-color: #246a1ae8;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.7s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        #gelContainer { /* Added this for positioning the scale relative to the gel */
+            position: relative;
+            background-color: #FFF8DC; /* Gel background */
+            border: 2px solid #2c3e50;
+            border-radius: 5px;
+            margin-top: 25px;
+            padding-right: 80px; /* Add padding to make space for the scale */
+        }
+        #gelCanvas {
+            background-color: transparent; /* Make canvas background transparent to show #gelContainer's color */
+            display: block; /* Remove extra space below canvas */
+        }
+        .scale {
+            position: absolute;
+            right: 0; /* Position scale to the very right of #gelContainer */
+            top: 50px; /* Adjust the top value with the visual top of the lanes */
+            bottom: 50px; /*Adjust bottom to maintain scale length if needed*/
+            width: 70px; /* Give it enough width */
+            padding-left: 10px; /* Space between canvas and scale line */
+            padding-top: 10px; /* Space from the top */
+            box-sizing: border-box; /* Include padding in width */
+            border-left: 2px solid black; /* The main scale line */
+        }
+        .scale-marker {
+            position: absolute;
+            left: 0; /* Align marker with the border-left */
+            width: 10px;
+            height: 1px;
+            background-color: black;
+        }
+        .scale-label {
+            position: absolute;
+            left: 15px; /* Position label to the right of the marker */
+            transform: translateY(-50%);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        /* Styles for lanes, wells, and bands */
+        /* These CSS styles are now mostly illustrative as drawing is on Canvas */
+        .lane-label {
+            text-align: center;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Interactive Gel Electrophoresis Simulator</h1>
+
+        <div class="control-panel">
+            <div class="input-group">
+                <label for="controlLength">Control Fragment Length (bp) (optional):</label>
+                <input type="number" id="controlLength" min="1" placeholder="e.g., 1000">
+                <small>Leave empty for no control lane.</small>
+            </div>
+
+            <div class="input-group">
+                <label for="sampleLengths">Sample Fragment Lengths (bp, comma separated):</label>
+                <input type="text" id="sampleLengths" value="100, 250, 500, 750">
+                <small>Example: 100, 250, 500, 750</small>
+            </div>
+
+            <button id="runGel">Run Gel Electrophoresis</button>
+            <button id="resetGel">Reset</button>
+        </div>
+
+        <div id="gelContainer">
+            <canvas id="gelCanvas" width="800" height="500"></canvas>
+            <div class="scale">
+                <div class="scale-marker" style="top: 0%;"></div>
+                <div class="scale-label" style="top: 0%;">0.0 cm</div>
+                <div class="scale-marker" style="top: 25%;"></div>
+                <div class="scale-label" style="top: 25%;">2.0 cm</div>
+                <div class="scale-marker" style="top: 50%;"></div>
+                <div class="scale-label" style="top: 50%;">4.0 cm</div>
+                <div class="scale-marker" style="top: 75%;"></div>
+                <div class="scale-label" style="top: 75%;">6.0 cm</div>
+                <div class="scale-marker" style="top: 100%;"></div>
+                <div class="scale-label" style="top: 100%;">8.0 cm</div>
+            </div>
+        </div>
+
+        <div class="results" id="results">
+            <h3>Results will appear here</h3>
+        </div>
+    </div>
+
+    <script>
+        // Colors for different lanes
+        const laneColors = [
+            '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0',
+            '#9966FF', '#FF9F40', '#8AC24A', '#F06292',
+            '#6A0DAD', '#00BFFF', '#ADFF2F', '#FFD700' // Added more colors
+        ];
+
+        // Initialize gel canvas
+        const canvas = document.getElementById('gelCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Run gel electrophoresis when button is clicked
+        document.getElementById('runGel').addEventListener('click', runGel);
+        document.getElementById('resetGel').addEventListener('click', resetGel);
+
+        function runGel() {
+            resetGel();
+
+            const controlLengthInput = document.getElementById('controlLength').value;
+            const controlLength = controlLengthInput ? parseInt(controlLengthInput) : null;
+
+            const sampleInput = document.getElementById('sampleLengths').value;
+            const sampleLengths = sampleInput.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+
+            if (sampleLengths.length === 0) {
+                alert('Please enter at least one valid sample fragment length (positive numbers only).');
+                return;
+            }
+            if (controlLength !== null && (isNaN(controlLength) || controlLength <= 0)) {
+                 alert('Control fragment length must be a positive number if entered.');
+                 return;
+            }
+
+            // Create a combined list for mobility calculation to ensure consistent normalization
+            let allLengthsForMobility = [...sampleLengths];
+            if (controlLength !== null) {
+                allLengthsForMobility.push(controlLength);
+            }
+            const mobilitiesNormalized = calculateMobility(allLengthsForMobility);
+
+            let controlMobilityNorm = null;
+            let sampleMobilitiesNorm = mobilitiesNormalized;
+
+            if (controlLength !== null) {
+                controlMobilityNorm = mobilitiesNormalized[mobilitiesNormalized.length - 1];
+                sampleMobilitiesNorm = mobilitiesNormalized.slice(0, -1);
+            }
+
+            drawGel(sampleLengths, sampleMobilitiesNorm, controlLength, controlMobilityNorm);
+            showResults(sampleLengths, sampleMobilitiesNorm, controlLength, controlMobilityNorm);
+        }
+
+        function resetGel() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            document.getElementById('results').innerHTML = '<h3>Results will appear here</h3>';
+            // Also redraw the background of the gel container if it was cleared by canvas
+            document.getElementById('gelContainer').style.backgroundColor = '#FFF8DC';
+        }
+
+        function calculateMobility(lengths) {
+            lengths = Array.isArray(lengths) ? lengths : [lengths];
+            const mobilityRaw = lengths.map(l => 1 / (l + 1e-6)); // Add small epsilon to prevent division by zero
+
+            const minMob = Math.min(...mobilityRaw);
+            const maxMob = Math.max(...mobilityRaw);
+
+            if (maxMob === minMob) {
+                return mobilityRaw.map(() => 0.5); // Center if all lengths are the same
+            }
+
+            // Normalize to 0-1, where 0 is least mobile (longest) and 1 is most mobile (shortest)
+            return mobilityRaw.map(m => (m - minMob) / (maxMob - minMob));
+        }
+
+        function drawGel(sampleLengths, sampleMobilitiesNorm, controlLength, controlMobilityNorm) {
+            const gelWidth = canvas.width;
+            const gelHeight = canvas.height;
+            const wellY = 50; // Y-coordinate for the top of the wells
+            const maxMigrationY = gelHeight - 50; // Y-coordinate for max migration (bottom of gel)
+            const laneWidth = 40;
+            const bandHeight = 20;
+
+            // Prepare data for drawing, maintaining the order for lanes
+            const laneData = [];
+            if (controlLength !== null) {
+                laneData.push({
+                    length: controlLength,
+                    mobility: controlMobilityNorm,
+                    isControl: true
+                });
+            }
+            sampleLengths.forEach((length, i) => {
+                laneData.push({
+                    length: length,
+                    mobility: sampleMobilitiesNorm[i],
+                    isControl: false
+                });
+            });
+
+            const numLanes = laneData.length;
+            const laneSpacing = gelWidth / (numLanes + 1); // Spacing between lane centers
+
+            // Clear canvas only (background is now from #gelContainer)
+            ctx.clearRect(0, 0, gelWidth, gelHeight);
+
+            // Draw wells and bands for each lane
+            for (let i = 0; i < numLanes; i++) {
+                const data = laneData[i];
+                const laneX = laneSpacing * (i + 1); // Center X for the current lane
+                const color = data.isControl ? 'green' : laneColors[i % laneColors.length];
+
+                // Calculate band Y position based on normalized mobility
+                // mobility=0 (longest) maps to wellY (top of gel, 0 cm migrated)
+                // mobility=1 (shortest) maps to maxMigrationY (bottom of gel, 8 cm migrated)
+                const bandY = wellY + data.mobility * (maxMigrationY - wellY);
+
+                // Draw well
+                ctx.fillStyle = 'lightgray';
+                ctx.fillRect(laneX - laneWidth / 2, wellY - 15, laneWidth, 10);
+                ctx.strokeStyle = data.isControl ? 'green' : 'black';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(laneX - laneWidth / 2, wellY - 15, laneWidth, 10);
+
+                // Draw band
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                // ctx.roundRect(x, y, width, height, radii) - draws a rounded rectangle
+                ctx.roundRect(laneX - laneWidth / 2, bandY - bandHeight / 2, laneWidth, bandHeight, 5);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Draw lane number label below the well
+                ctx.fillStyle = 'black';
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`Lane ${i + 1}`, laneX, wellY + 20);
+
+                // Draw band label (length and migration distance)
+                // **FIXED**: realDistCm calculation here
+                const realDistCm = (data.mobility * 8).toFixed(1); // Smallest = 8cm, Largest = 0cm
+                const realDistMm = (data.mobility * 80).toFixed(0);
+
+                ctx.fillStyle = color; // Match label color to band color
+                ctx.font = 'bold 11px Arial';
+                ctx.textAlign = 'left';
+                ctx.fillText(`${data.length} bp`, laneX + laneWidth / 2 + 5, bandY - 5);
+                ctx.font = '11px Arial';
+                ctx.fillText(`${realDistCm} cm | ${realDistMm} mm`, laneX + laneWidth / 2 + 5, bandY + 10);
+            }
+            // Removed the Canvas-drawn scale here as it's now handled by HTML/CSS
+        }
+
+        function showResults(sampleLengths, sampleMobilitiesNorm, controlLength, controlMobilityNorm) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<h3>Results</h3>';
+
+            let laneIndex = 1;
+
+            if (controlLength !== null) {
+                const realDistCm = (controlMobilityNorm * 8).toFixed(1); // FIXED: realDistCm calculation
+                resultsDiv.innerHTML += `
+                    <p><strong>Control (${controlLength} bp):</strong> Migrated ${realDistCm} cm</p>
+                `;
+            }
+
+            let html = '<table border="1" cellpadding="8" style="width:100%; border-collapse:collapse;">';
+            html += `
+                <tr>
+                    <th>Lane</th>
+                    <th>Fragment Length (bp)</th>
+                    <th>Migration Distance (cm)</th>
+                </tr>
+            `;
+
+            if (controlLength !== null) {
+                const realDistCm = (controlMobilityNorm * 8).toFixed(1); // FIXED: realDistCm calculation
+                html += `
+                    <tr style="color:green;">
+                        <td>${laneIndex++}</td>
+                        <td>${controlLength} (Control)</td>
+                        <td>${realDistCm}</td>
+                    </tr>
+                `;
+            }
+
+            sampleLengths.forEach((length, i) => {
+                const realDistCm = (sampleMobilitiesNorm[i] * 8).toFixed(1); // FIXED: realDistCm calculation
+                html += `
+                    <tr style="color:${laneColors[(controlLength ? i + 1 : i) % laneColors.length]}">
+                        <td>${laneIndex++}</td>
+                        <td>${length}</td>
+                        <td>${realDistCm}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</table>';
+            resultsDiv.innerHTML += html;
+        }
+    </script>
+</body>
+</html>
